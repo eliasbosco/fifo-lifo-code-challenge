@@ -1,7 +1,7 @@
 package queue
 
 import (
-	unicorns "github.com/eliasbosco/fifo-lifo-code-challenge/unicorns/unicorns"
+	unicorns "unicorn/unicorns"
 )
 
 type QueueElement struct {
@@ -11,8 +11,6 @@ type QueueElement struct {
 }
 
 type QueueList []QueueElement
-
-var Queue = &QueueList{}
 
 func (q *QueueList) Enqueue(value *QueueElement) *QueueElement {
 	queue := *q
@@ -31,13 +29,22 @@ func (q *QueueList) Dequeue() *QueueElement {
 	return nil
 }
 
-func (q *QueueList) FindByRequestIdFirstPosition(requestId int) *QueueElement {
+func (q *QueueList) FindQueueFirstPosition(requestId int) *QueueElement {
 	queue := *q
 	for i, item := range queue {
 		if i == 0 && item.RequestId == requestId {
 			return &item
 		} else {
 			return nil
+		}
+	}
+	return nil
+}
+
+func (q *QueueList) FindQueueByRequestId(requestId int) *QueueElement {
+	for _, item := range *q {
+		if item.RequestId == requestId {
+			return &item
 		}
 	}
 	return nil

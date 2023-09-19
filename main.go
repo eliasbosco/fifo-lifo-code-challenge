@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +10,9 @@ import (
 	"runtime"
 	"strconv"
 	"time"
+
+	queue "unicorn/queue"
+	unicorns "unicorn/unicorns"
 
 	"github.com/julienschmidt/httprouter"
 )
@@ -22,78 +24,14 @@ const (
 
 var CPU_CORES_WORKERS = 2*runtime.NumCPU() + 1
 
-type CapabilitiesList = []string
-
-var Capabilities = CapabilitiesList{}
-
-// LIFO stack
-type UnicornElement struct {
-	Name         string           `json:"name"`
-	Capabilities CapabilitiesList `json:"capabilities"`
-}
-
-type UnicornList []UnicornElement
-
-func (u *UnicornList) Push(unicorn *UnicornElement) {
-	*u = append(*u, *unicorn)
-}
-
-func (u *UnicornList) Pop() *UnicornElement {
-	uni := *u
-	if len(*u) > 0 {
-		res := uni[len(uni)-1]
-		*u = uni[:len(uni)-1]
-		return &res
-	}
-	return nil
-}
-
-type QueueElement struct {
-	Unicorns  *UnicornList `json:"unicorns"`
-	RequestId int          `json:"request_id"`
-	Status    *string      `json:"status"`
-}
-
-type QueueList []QueueElement
-
-var Queue = &QueueList{}
-
-func (q *QueueList) Enqueue(value *QueueElement) *QueueElement {
-	queue := *q
-	queue = append(queue, *value)
-	*q = queue
-	return &queue[len(queue)-1]
-}
-
-func (q *QueueList) Dequeue() *QueueElement {
-	queue := *q
-	if len(*q) > 0 {
-		dequeued := queue[0]
-		*q = queue[1:]
-		return &dequeued
-	}
-	return nil
-}
-
-func (q *QueueList) FindByRequestIdFirstPosition(requestId int) *QueueElement {
-	queue := *q
-	for i, item := range queue {
-		if i == 0 && item.RequestId == requestId {
-			return &item
-		} else {
-			return nil
-		}
-	}
-	return nil
-}
-
 type response struct {
 	Message string `json:"message"`
 	Stack   string `json:"stack"`
 }
 
-var Names = []string{""}
-var Adjectives = []string{""}
+var Queue = &queue.QueueList{}
+var petNames = unicorns.PetNames{}
+var adjectives = unicorns.Adjectives{}
 
 func setUnicornsProduction(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	fmt.Println("processing new request...")
@@ -104,34 +42,31 @@ func setUnicornsProduction(w http.ResponseWriter, r *http.Request, _ httprouter.
 	}{}
 	err := unmarshal(r.Body, &rb)
 	if err != nil {
-		d, _ := json.Marshal(response{
+		errorHandler(w, r, 500, response{
 			Stack: fmt.Sprintf("%v", err),
 		})
-		w.Write(d)
 		return
 	}
 
 	requestId := rand.Intn(99999)
-	unicornList := new(UnicornList)
-	queue := new(QueueElement)
-	fmt.Println("1 - %v", &queue)
-	queue = Queue.Enqueue(queue)
-	fmt.Println("3 - %v", &queue)
+	unicornList := new(unicorns.UnicornList)
+	_queue := new(queue.QueueElement)
+	_queue = Queue.Enqueue(_queue)
 
-	queue.RequestId = requestId
+	_queue.RequestId = requestId
 	status := PRODUCTION_STATUS_IN_PROGRESS
-	queue.Status = &status
-	queue.Unicorns = &UnicornList{}
-
-	fmt.Println("request_id:", requestId, " created.")
+	_queue.Status = &status
+	_queue.Unicorns = &unicorns.UnicornList{}
+	fmt.Printf("Request_id '%v' enqueued on position '%v'\n", requestId, len(*Queue))
 
 	// Concurrency
-	ch := make(chan *UnicornElement, CPU_CORES_WORKERS)
+	ch := make(chan *unicorns.UnicornElement, CPU_CORES_WORKERS)
 	for j := 0; j < rb.Amount; j++ {
 
-		name := Adjectives[rand.Intn(len(Adjectives)-1)] + "-" + Names[rand.Intn(len(Names)-1)]
+		name := adjectives[rand.Intn(len(adjectives)-1)] + "-" + petNames[rand.Intn(len(petNames)-1)]
 		// Check if unicorn collection doesn't contain name already
-		if unicornList.getUnicornByName(name) {
+		if unicornList.GetUnicornByName(name) {
+			fmt.Printf("Unicorn name '%v' repeated\n", name)
 			j--
 			continue
 		}
@@ -139,87 +74,50 @@ func setUnicornsProduction(w http.ResponseWriter, r *http.Request, _ httprouter.
 		go processUnicorn(name, ch)
 	}
 
+	// Pushing Unicorns to the LIFO stack
 	for i := 0; i < rb.Amount; i++ {
-		unicornList.Push(<-ch)
+		_unicorn := *<-ch
+		unicornList.Push(&_unicorn)
+		fmt.Printf("Unicorn '%v' pushed to stack\n", _unicorn.Name)
 	}
-	fmt.Println(unicornList)
+	fmt.Printf("All the Unicorns pushed to the stack:\n%v", unicornList)
 
+	// Popping Unicorns from the stack into the FIFO Queue
 	for i := 0; i < rb.Amount; i++ {
-		queue.Unicorns.Push(unicornList.Pop())
+		_unicorn := unicornList.Pop()
+		_queue.Unicorns.Push(_unicorn)
+		fmt.Printf("Unicorn '%v' popped from stack\n", _unicorn.Name)
 	}
-	fmt.Println(queue.Unicorns)
+	fmt.Printf("All the Unicorns popped:\n%v", _queue.Unicorns)
 
 	status = PRODUCTION_STATUS_READY
-	queue.Status = &status
+	_queue.Status = &status
 
-	fmt.Println(Queue)
-
-	fmt.Println("Unicorns production ready...")
-	d, _ := json.Marshal(queue)
+	fmt.Printf("Unicorns production, request_id '%v' ready...\n", _queue.RequestId)
+	d, _ := json.Marshal(_queue)
 	w.Write(d)
 }
 
-func processUnicorn(name string, ch chan *UnicornElement) {
-	item := new(UnicornElement)
+func processUnicorn(name string, ch chan *unicorns.UnicornElement) {
+	item := new(unicorns.UnicornElement)
 	item.Name = name
 
 	for i := 0; i < 3; i++ {
-		idx := rand.Intn(len(Capabilities) - 1)
-		cap := Capabilities[idx]
-		if getCapabilityByName(item.Capabilities, cap) {
+		idx := rand.Intn(len(unicorns.Capabilities) - 1)
+		cap := unicorns.Capabilities[idx]
+		if unicorns.GetCapabilityByName(item.Capabilities, cap) {
+			fmt.Printf("Capability '%v' repeated in the Unicorn '%v'\n", cap, name)
 			i--
 			continue
 		}
 		item.Capabilities = append(item.Capabilities, cap)
 	}
 
-	fmt.Println("Unicorn", name, " is in production")
-	time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
-	fmt.Println("Unicorn", name, " produced")
+	prodTime := time.Duration(rand.Intn(1000)) * time.Millisecond
+	fmt.Printf("Start producing Unicorn '%v'\n", name)
+	time.Sleep(prodTime)
+	fmt.Printf("Unicorn '%v' produced in %v\n", name, prodTime)
 	ch <- item
-}
-
-func getCapabilityByName(capabilitiesList CapabilitiesList, name string) bool {
-	for _, item := range capabilitiesList {
-		if item == name {
-			return true
-		}
-	}
-	return false
-}
-
-func (u *UnicornList) getUnicornByName(name string) bool {
-	for _, item := range *u {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func (q *QueueList) getQueueByRequestId(requestId int) *QueueElement {
-	for _, item := range *q {
-		if item.RequestId == requestId {
-			return &item
-		}
-	}
-	return nil
-}
-
-func getRequestDetail(w http.ResponseWriter, r *http.Request, params httprouter.Params) {
-	fmt.Println("retrieving request detail by requestId")
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
-	d, _ := json.Marshal(&Queue)
-	w.Write(d)
-}
-
-func getAllRequest(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Println("retrieving request detail by requestId")
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
-	d, _ := json.Marshal(*Queue)
-	w.Write(d)
 }
 
 func unmarshal(input io.Reader, marshalStruct interface{}) error {
@@ -233,18 +131,29 @@ func unmarshal(input io.Reader, marshalStruct interface{}) error {
 	return nil
 }
 
-func getArrayStringFromTextFile(fileName string) ([]string, error) {
-	fn, err := os.Open(fileName)
-	defer fn.Close()
-	if err != nil {
-		return nil, err
+func getRequestDetail(w http.ResponseWriter, r *http.Request, params httprouter.Params) {
+	fmt.Println("retrieving request detail by requestId")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	requestId, _ := strconv.Atoi(params.ByName("request_id"))
+
+	_queue := Queue.FindQueueByRequestId(requestId)
+	if _queue == nil {
+		errorHandler(w, r, 404, response{
+			Message: "Queue not found",
+		})
+		return
 	}
-	var names []string
-	var scanner = bufio.NewScanner(fn)
-	for scanner.Scan() {
-		names = append(names, scanner.Text())
-	}
-	return names, nil
+	d, _ := json.Marshal(_queue)
+	w.Write(d)
+}
+
+func getAllRequest(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	fmt.Println("retrieving request detail by requestId")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	d, _ := json.Marshal(*Queue)
+	w.Write(d)
 }
 
 func deliveryPackage(w http.ResponseWriter, r *http.Request, params httprouter.Params) {
@@ -253,8 +162,8 @@ func deliveryPackage(w http.ResponseWriter, r *http.Request, params httprouter.P
 
 	requestId, _ := strconv.Atoi(params.ByName("request_id"))
 
-	queue := Queue.FindByRequestIdFirstPosition(requestId)
-	if queue == nil || *queue.Status != PRODUCTION_STATUS_READY {
+	_queue := Queue.FindQueueFirstPosition(requestId)
+	if _queue == nil || *_queue.Status != PRODUCTION_STATUS_READY {
 		d, _ := json.Marshal(response{
 			Message: fmt.Sprint("Package request_id: ", requestId, " not available."),
 		})
@@ -263,8 +172,8 @@ func deliveryPackage(w http.ResponseWriter, r *http.Request, params httprouter.P
 	}
 
 	d, _ := json.Marshal(struct {
-		Message string       `json:"message"`
-		Package QueueElement `json:"package"`
+		Message string             `json:"message"`
+		Package queue.QueueElement `json:"package"`
 	}{
 		Message: "Package deliveried sucessfully",
 		Package: *Queue.Dequeue(),
@@ -275,7 +184,7 @@ func deliveryPackage(w http.ResponseWriter, r *http.Request, params httprouter.P
 func cleanQueue(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	fmt.Println("deliverying unicorns package by requestId")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	Queue = &QueueList{}
+	Queue = &queue.QueueList{}
 	d, _ := json.Marshal(struct {
 		Message string `json:"message"`
 	}{
@@ -284,22 +193,22 @@ func cleanQueue(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	w.Write(d)
 }
 
-func main() {
-	Capabilities = append(Capabilities, "super strong", "fullfill wishes", "fighting capabilities", "fly", "swim", "sing", "run", "cry", "change color", "talk", "dance", "code", "design", "drive", "walk", "talk chinese", "lazy")
+func errorHandler(w http.ResponseWriter, r *http.Request, status int, msg response) {
+	w.WriteHeader(status)
+	d, _ := json.Marshal(msg)
+	w.Write(d)
+}
 
+func main() {
 	var err error
-	Names, err = getArrayStringFromTextFile("petnames.txt")
+	petNames, err = unicorns.GetPetNames()
 	if err != nil {
-		fmt.Println("Unicorn names not found")
 		os.Exit(1)
 	}
 
-	Adjectives, err = getArrayStringFromTextFile("adj.txt")
+	adjectives, err = unicorns.GetAdjectives()
 	if err != nil {
-		if err != nil {
-			fmt.Println("Unicorn adjectives not found")
-			os.Exit(1)
-		}
+		os.Exit(1)
 	}
 
 	router := httprouter.New()

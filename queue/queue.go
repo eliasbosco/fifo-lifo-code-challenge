@@ -4,6 +4,11 @@ import (
 	unicorns "unicorn/unicorns"
 )
 
+const (
+	PRODUCTION_STATUS_IN_PROGRESS string = "in progress"
+	PRODUCTION_STATUS_READY              = "ready"
+)
+
 type QueueElement struct {
 	Unicorns  *unicorns.UnicornList `json:"unicorns"`
 	RequestId int                   `json:"request_id"`

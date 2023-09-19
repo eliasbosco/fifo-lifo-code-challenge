@@ -17,11 +17,6 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
-const (
-	PRODUCTION_STATUS_IN_PROGRESS string = "in progress"
-	PRODUCTION_STATUS_READY              = "ready"
-)
-
 var CPU_CORES_WORKERS = 2*runtime.NumCPU() + 1
 
 type response struct {
@@ -54,7 +49,7 @@ func setUnicornsProduction(w http.ResponseWriter, r *http.Request, _ httprouter.
 	_queue = Queue.Enqueue(_queue)
 
 	_queue.RequestId = requestId
-	status := PRODUCTION_STATUS_IN_PROGRESS
+	status := queue.PRODUCTION_STATUS_IN_PROGRESS
 	_queue.Status = &status
 	_queue.Unicorns = &unicorns.UnicornList{}
 	fmt.Printf("Request_id '%v' enqueued on position '%v'\n", requestId, len(*Queue))
@@ -90,7 +85,7 @@ func setUnicornsProduction(w http.ResponseWriter, r *http.Request, _ httprouter.
 	}
 	fmt.Printf("All the Unicorns popped:\n%v", _queue.Unicorns)
 
-	status = PRODUCTION_STATUS_READY
+	status = queue.PRODUCTION_STATUS_READY
 	_queue.Status = &status
 
 	fmt.Printf("Unicorns production, request_id '%v' ready...\n", _queue.RequestId)
@@ -163,11 +158,10 @@ func deliveryPackage(w http.ResponseWriter, r *http.Request, params httprouter.P
 	requestId, _ := strconv.Atoi(params.ByName("request_id"))
 
 	_queue := Queue.FindQueueFirstPosition(requestId)
-	if _queue == nil || *_queue.Status != PRODUCTION_STATUS_READY {
-		d, _ := json.Marshal(response{
-			Message: fmt.Sprint("Package request_id: ", requestId, " not available."),
+	if _queue == nil || *_queue.Status != queue.PRODUCTION_STATUS_READY {
+		errorHandler(w, r, 500, response{
+			Message: fmt.Sprintf("Package request_id '%v' not available yet", requestId),
 		})
-		w.Write(d)
 		return
 	}
 
@@ -218,5 +212,15 @@ func main() {
 	router.PUT("/api/delivery-package/:request_id", deliveryPackage)
 	router.DELETE("/api/clean-queue", cleanQueue)
 
-	http.ListenAndServe(":8888", router)
+	PORT := ":" + os.Getenv("API_PORT")
+	if PORT == "" {
+		PORT = ":8888"
+	}
+
+	err = http.ListenAndServe(PORT, router)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	fmt.Printf("Unicorn Factory is firing this up on port '%v'\n", PORT)
 }

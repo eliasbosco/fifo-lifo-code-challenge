@@ -135,7 +135,7 @@ func getRequestDetail(w http.ResponseWriter, r *http.Request, params httprouter.
 	_queue := Queue.FindQueueByRequestId(requestId)
 	if _queue == nil {
 		errorHandler(w, r, 404, response{
-			Message: "Queue not found",
+			Message: "Request not found",
 		})
 		return
 	}
@@ -212,15 +212,15 @@ func main() {
 	router.PUT("/api/delivery-package/:request_id", deliveryPackage)
 	router.DELETE("/api/clean-queue", cleanQueue)
 
-	PORT := ":" + os.Getenv("API_PORT")
-	if PORT == "" {
-		PORT = ":8888"
+	PORT := ":8888"
+	if os.Getenv("API_PORT") != "" {
+		PORT = os.Getenv("API_PORT")
 	}
 
+	fmt.Printf("Unicorn Factory is firing this up on port '%v'\n", PORT)
 	err = http.ListenAndServe(PORT, router)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	fmt.Printf("Unicorn Factory is firing this up on port '%v'\n", PORT)
 }
